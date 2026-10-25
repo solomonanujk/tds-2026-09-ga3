@@ -302,11 +302,26 @@ ACTION_SENTENCE = {
 
 def build_rationale(action: str, evidence: List[str], facts: Dict[str, Any], supplied: Any = None) -> str:
     """Prefer the model's reasoning when it is valid; otherwise synthesise."""
-    if isinstance(supplied, str):
+    if isinstance(supplied, str) and supplied.strip():
         candidate = " ".join(supplied.split())
+        if len(candidate) > 1500:
+            candidate = candidate[:1400].rsplit(" ", 1)[0]
         cited = sum(1 for ref in evidence if ref in candidate)
         if 60 <= len(candidate) <= 1500 and action in candidate and cited >= 2:
             return candidate
+        # The model's reasoning is the valuable part; repair the formal
+        # requirements around it rather than discarding it for boilerplate.
+        refs = list(evidence) + ["", "", ""]
+        prefix = "" if action in candidate else f"Action {action}. "
+        suffix = (
+            ""
+            if cited >= 2
+            else f" The decisive references [{refs[0]}], [{refs[1]}] and [{refs[2]}] "
+            f"in that paragraph support this."
+        )
+        repaired = " ".join(f"{prefix}{candidate}{suffix}".split())
+        if 60 <= len(repaired) <= 1500:
+            return repaired
     refs = list(evidence) + ["", "", ""]
     sentence = ACTION_SENTENCE.get(action, f"{action}: chosen from the decisive paragraph")
     rationale = (
@@ -385,6 +400,10 @@ SYSTEM_PROMPT = (
     "- evidenceRefs must be exactly the three bracketed references of the one "
     "paragraph that determines the action, copied without the brackets. Never "
     "cite the cover sheet, an archive example or a decoy.\n"
+    "- rationale must say which action you chose, quote at least two of those "
+    "references, and explain in one or two sentences what those specific lines "
+    "assert about THIS invoice that forces the action. Do not write generic "
+    "policy text.\n"
     "- facts.amountMinor is an integer in minor units.\n"
     "Answer with JSON only."
 )

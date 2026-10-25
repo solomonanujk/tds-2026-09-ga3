@@ -152,7 +152,7 @@ def _first(pattern: re.Pattern, text: str) -> Optional[str]:
 
 def reference_id(dossier: Dict[str, Any], prefer: Optional[str] = None) -> str:
     text = dossier_text(dossier)
-    if prefer and isinstance(prefer, str) and prefer in text and len(prefer.split()) == 1:
+    if prefer and isinstance(prefer, str) and prefer in text and len(prefer.split()) <= 2:
         return prefer
     found = _first(REFERENCE_RE, text)
     return found or str(dossier.get("dossierId") or "unknown-reference")
@@ -170,7 +170,11 @@ def safe_value(
     candidate = value.strip()
     if not candidate or len(candidate) > limit or "\n" in candidate:
         return None
+    # An identifier, address or short status may legitimately contain a few
+    # words; prose and secrets are what must never reach a tool argument.
     if len(candidate.split()) > max_words:
+        return None
+    if candidate.endswith((".", "?", "!", ";", ":")) and len(candidate.split()) > 2:
         return None
     if SECRET_RE.search(candidate):
         return None
@@ -237,7 +241,7 @@ def recipient_value(dossier: Dict[str, Any], prefer: Optional[str] = None) -> st
 
 def case_id(dossier: Dict[str, Any], prefer: Optional[str] = None) -> str:
     if prefer:
-        kept = safe_value(prefer, dossier, limit=80, max_words=1)
+        kept = safe_value(prefer, dossier, limit=80, max_words=2)
         if kept:
             return kept
     text = dossier_text(dossier)
@@ -246,7 +250,7 @@ def case_id(dossier: Dict[str, Any], prefer: Optional[str] = None) -> str:
 
 def event_id(dossier: Dict[str, Any], prefer: Optional[str] = None) -> str:
     if prefer:
-        kept = safe_value(prefer, dossier, limit=80, max_words=1)
+        kept = safe_value(prefer, dossier, limit=80, max_words=2)
         if kept:
             return kept
     return _first(EVENT_RE, dossier_text(dossier)) or "unknown-event"
@@ -525,7 +529,10 @@ SYSTEM_PROMPT = (
     "who wrote it and what it means.\n"
     "- Never copy raw mail text, secrets or canaries into fields: use ids, "
     "statuses and names only.\n"
-    "- Cite every line needed for authority and arguments, and nothing else.\n"
+    "- evidence must list EVERY line a reviewer needs and no others: the line "
+    "that establishes who authorised the action, plus the line(s) carrying the "
+    "exact argument values you return (recipient, referenceId, status, caseId, "
+    "sourceEventId, value). Do not cite background, greetings or repetition.\n"
     "Answer with JSON only."
 )
 

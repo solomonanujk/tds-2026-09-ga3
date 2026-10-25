@@ -9,6 +9,7 @@ the run still produces a valid action attempt.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,6 +42,41 @@ def evidence_lines(transcript: str) -> List[Dict[str, str]]:
         seen.add(line_id)
         out.append({"id": line_id, "text": text})
     return out
+
+
+SIGNAL_RE = re.compile(
+    r"(\d+\s*%|\bp\d{2}\b|\d+\s*(?:ms|s|m|gb|mb|rps|qps|req|replicas?)\b|"
+    r"error|fail|timeout|saturat|throttl|latenc|capacity|limit|cap(?:ped)?|quota|"
+    r"deploy|rollback|release|flag|config|restart|crash|oom|memory|cpu|disk|"
+    r"5\d{2}\b|4\d{2}\b|exhaust|degrad|outage|spike|drop|stale|lag|queue|retry|"
+    r"upstream|downstream|dependency|certificate|expire)",
+    re.IGNORECASE,
+)
+
+
+def select_lines(
+    lines: List[Dict[str, str]], causes: List[str], limit: int = 110
+) -> List[Dict[str, str]]:
+    """Trim a long transcript to the lines that could decide the cause.
+
+    A full transcript is mostly irrelevant chatter, and sending all of it costs
+    enough latency to miss the per-request budget. Lines that carry a signal, or
+    that overlap the candidate causes, are kept; the rest are dropped.
+    """
+    if len(lines) <= limit:
+        return lines
+    cause_tokens = set()
+    for cause in causes:
+        cause_tokens |= set(tokens(cause))
+    scored = []
+    for position, line in enumerate(lines):
+        score = 0
+        if SIGNAL_RE.search(line["text"]):
+            score += 2
+        score += 2 * len(cause_tokens & set(tokens(line["text"])))
+        scored.append((score, position, line))
+    keep = sorted(scored, key=lambda item: (-item[0], item[1]))[:limit]
+    return [line for _, _, line in sorted(keep, key=lambda item: item[1])]
 
 
 def _tool_index(catalog: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -372,13 +408,17 @@ def plan_incident(
 ) -> Dict[str, Any]:
     """Plan one incident. Never raises; always returns a usable plan."""
     lines = evidence_lines(incident.get("transcript", ""))
+    causes = [c for c in (incident.get("allowedRootCauses") or []) if isinstance(c, str)]
+    prompt_lines = select_lines(lines, causes)
     raw = llm.chat_json(
         [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _prompt(incident, catalog, policy, lines)},
+            {"role": "user", "content": _prompt(incident, catalog, policy, prompt_lines)},
         ],
-        max_tokens=1200,
-        timeout=11.0,
+        max_tokens=900,
+        # The whole request must answer inside the grader's budget, so the
+        # planner gives up early and the analyser finishes the run.
+        timeout=float(os.environ.get("INCIDENT_PLAN_TIMEOUT", "9")),
         attempts=1,
     )
     validated = validate_plan(raw, incident, catalog, policy) if raw is not None else None

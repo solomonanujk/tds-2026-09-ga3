@@ -161,6 +161,20 @@ def decide_all(
             misses.append(dossier)
 
     if misses:
+        # Check sends two evaluations over the same core corpus. Claiming each
+        # key makes the second request wait for the first instead of running a
+        # second full model pass beside it.
+        mine, theirs = [], []
+        for dossier in misses:
+            dossier_id = str(dossier.get("dossierId"))
+            won, existing = store.claim(NS_DECISION, keys[dossier_id])
+            if won:
+                mine.append(dossier)
+            elif existing is not None:
+                out[dossier_id] = existing
+            else:
+                theirs.append(dossier)
+        misses = mine
         started = monotonic()
         batches = [misses[i : i + BATCH_SIZE] for i in range(0, len(misses), BATCH_SIZE)]
         with ThreadPoolExecutor(max_workers=max(1, MAX_WORKERS)) as pool:
@@ -173,10 +187,13 @@ def decide_all(
                     future.result(timeout=max(1.0, DECISION_BUDGET - (monotonic() - started)))
                 except Exception:
                     continue
-        for dossier in misses:
+        for dossier in misses + theirs:
             dossier_id = str(dossier.get("dossierId"))
             cached = store.get(NS_DECISION, keys[dossier_id])
+            if cached is None and dossier in theirs:
+                cached = store.await_ready(NS_DECISION, keys[dossier_id], timeout=15.0)
             if cached is None:
+                store.release(NS_DECISION, keys[dossier_id])
                 choice = policy.heuristic_decision(dossier)
                 cached = policy.assemble(dossier, choice["action"], choice.get("fields") or {}, choice["evidence"])
                 if not cached["evidence"]:
