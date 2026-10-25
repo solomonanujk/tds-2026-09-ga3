@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import time
 
+from typing import Dict, List
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 
@@ -48,9 +50,12 @@ async def capture_requests(request, call_next):
     request._receive = receive  # noqa: SLF001 - replay the consumed body
     response = await call_next(request)
     try:
+        # Keep a window per route: one question's traffic must not evict
+        # another's before it can be inspected.
+        route = request.url.path.strip("/").split("/")[0] or "root"
         store.put(
             "debug.capture",
-            f"{time.time():.6f}",
+            f"{route}|{time.time():.6f}",
             {
                 "at": time.time(),
                 "path": request.url.path,
@@ -58,10 +63,7 @@ async def capture_requests(request, call_next):
                 "body": body[:400_000].decode("utf-8", "replace"),
             },
         )
-        captures = sorted(
-            r["key"] for r in [{"key": k} for k in _capture_keys()]
-        )
-        for stale in captures[:-20]:
+        for stale in sorted(k for k in _capture_keys() if k.startswith(f"{route}|"))[:-8]:
             store.delete("debug.capture", stale)
     except Exception:
         pass
@@ -79,8 +81,15 @@ def _capture_keys():
 def debug_requests(token: str = "", limit: int = 5) -> JSONResponse:
     if not DEBUG_TOKEN or token != DEBUG_TOKEN:
         return JSONResponse({"error": "not found"}, status_code=404)
-    keys = sorted(_capture_keys())[-max(1, min(limit, 20)):]
-    return JSONResponse({"captures": [store.get("debug.capture", key) for key in keys]})
+    per_route: Dict[str, List[str]] = {}
+    for key in sorted(_capture_keys()):
+        per_route.setdefault(key.split("|", 1)[0], []).append(key)
+    keys = []
+    for route_keys in per_route.values():
+        keys.extend(route_keys[-max(1, min(limit, 8)):])
+    return JSONResponse(
+        {"captures": [store.get("debug.capture", key) for key in sorted(keys)]}
+    )
 
 
 @app.get("/", response_class=PlainTextResponse)

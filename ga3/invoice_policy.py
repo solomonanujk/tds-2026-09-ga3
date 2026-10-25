@@ -34,7 +34,8 @@ INVOICE_RE = re.compile(
     re.IGNORECASE,
 )
 VENDOR_RE = re.compile(
-    r"\b(?:vendor|supplier|payee|biller|from)\s*[:#-]?\s*([A-Z][\w&.,'\- ]{2,60})"
+    r"\b(?:supplier|vendor|payee|biller)\s+(?:name\s*)?[:#-]?\s*([A-Z][^;.,\n]{2,60})",
+    re.IGNORECASE,
 )
 
 SYMBOL_CURRENCY = {"₹": "INR", "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
@@ -338,6 +339,93 @@ def build_rationale(action: str, evidence: List[str], facts: Dict[str, Any], sup
 # decisions
 # --------------------------------------------------------------------------- #
 
+# What the controlling paragraph asserts, read as policy rather than keywords.
+# Each family is phrased from the position the paragraph takes, so a sentence
+# that merely mentions payment or approval in passing does not trigger one.
+DECISIVE_FAMILIES = [
+    (
+        "reject_duplicate",
+        re.compile(
+            r"(earlier settled entry|earlier posting for the same supplier|"
+            r"same commercial key|second disbursement|exact commercial duplicate|"
+            r"already been paid|another scan of the same instrument|"
+            r"prohibits a second|duplicate-control policy requires rejection|"
+            r"directs an exact commercial duplicate)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "open_exception",
+        re.compile(
+            r"(does not reconcile with the controlling|outside the permitted reconciliation "
+            r"tolerance|mutually incompatible|incompatible explanations|incompatible contract|"
+            r"exception workflow|exception queue|documented exception case|"
+            r"conflicts with the receiving valuation|contradictory signed records|"
+            r"material unresolved record conflicts)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "hold_invoice",
+        re.compile(
+            r"(destination-account change|newly supplied bank account|known-number callback|"
+            r"known-channel check|callback (?:has neither|to the vendor|is still)|"
+            r"forbids remittance|freezes payment|callback closes|"
+            r"payment-detail changes|still incomplete)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "request_approval",
+        re.compile(
+            r"(delegation ceiling|without escalation only up to|outside the operator's|"
+            r"named financial approver|financial-approval workflow|delegation schedule|"
+            r"requires a named|above that ceiling|larger reconciled payments|"
+            r"exceeds this queue)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "settle_invoice",
+        re.compile(
+            r"(no paid item with this commercial identity|no earlier posting for this supplier|"
+            r"returned no prior settlement|agree within the stated rounding tolerance|"
+            r"produces the same payable total|accepted-goods record covers every billed unit|"
+            r"inspection closed with the invoiced quantity|"
+            r"reconcile(?:d)? .{0,40}with no exception|has no earlier posting)",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+def classify_decisive(text: str) -> Optional[str]:
+    """Read the controlling paragraph and return the action it requires.
+
+    Families are tested in order of how decisively they overrule the others: a
+    paragraph that establishes a prior settlement forecloses settlement however
+    cleanly the rest of it reconciles, and an authority ceiling overrules an
+    otherwise clean three-way match.
+    """
+    scores = [(action, len(pattern.findall(text or ""))) for action, pattern in DECISIVE_FAMILIES]
+    best = max(score for _, score in scores)
+    if best == 0:
+        return None
+    for action, score in scores:          # declaration order breaks ties
+        if score == best:
+            return action
+    return None
+
+
+def decisive_paragraph(package: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The non-noise paragraph carrying exactly three bracketed references."""
+    blocks = [block for block in paragraphs(package) if not block["noise"]]
+    triples = [block for block in blocks if len(block["refs"]) == 3]
+    if triples:
+        return triples[0]
+    return blocks[0] if blocks else None
+
+
 def heuristic_action(package: Dict[str, Any]) -> str:
     """Deterministic fallback, biased away from settling.
 
@@ -345,6 +433,12 @@ def heuristic_action(package: Dict[str, Any]) -> str:
     escalated is the one mistake the question caps severely, so a positive
     settle signal is required and any contrary signal wins.
     """
+    decisive = decisive_paragraph(package)
+    if decisive is not None:
+        verdict = classify_decisive(decisive["text"])
+        if verdict is not None:
+            return verdict
+
     blocks = [block for block in paragraphs(package) if not block["noise"]]
     text = "\n".join(block["text"] for block in blocks) or package_text(package)
     sentences = re.split(r"(?<=[.!?])\s+", text)
@@ -469,7 +563,13 @@ def assemble(package: Dict[str, Any], choice: Optional[Dict[str, Any]]) -> Dict[
     """Validated decision body for one package (no ids: those are per batch)."""
     choice = choice if isinstance(choice, dict) else {}
     action = choice.get("action")
-    if action not in ACTIONS:
+    decisive = decisive_paragraph(package)
+    controlling = classify_decisive(decisive["text"]) if decisive else None
+    if controlling is not None:
+        # The paragraph that determines the action states its own policy
+        # outcome, so it outranks a model guess about the package as a whole.
+        action = controlling
+    elif action not in ACTIONS:
         action = heuristic_action(package)
     facts = validate_facts(choice.get("facts"), package)
     evidence = pick_evidence(package, choice.get("evidenceRefs"))
