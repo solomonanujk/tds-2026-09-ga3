@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import mailroom_policy as policy
 from . import llm, store
@@ -376,10 +377,12 @@ async def _handle(request: Request) -> JSONResponse:
     if body.get("profile") != PROFILE:
         return _error(400, "UNSUPPORTED_PROFILE", f"profile must be {PROFILE}")
     operation = body.get("operation")
+    # The decision pass makes blocking HTTP calls; keeping it off the event
+    # loop is what lets /healthz answer while a cold corpus is being decided.
     if operation == "propose":
-        return _propose(body)
+        return await run_in_threadpool(_propose, body)
     if operation == "commit":
-        return _commit(body)
+        return await run_in_threadpool(_commit, body)
     return _error(400, "UNSUPPORTED_OPERATION", "operation must be propose or commit")
 
 

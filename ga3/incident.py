@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import planner, store, trace
 from .canon import digest, short_id
@@ -454,6 +455,7 @@ def _advance_after_diagnostics(state: Dict[str, Any]) -> Tuple[List[Dict[str, An
 
 @router.post("/v2/incidents")
 async def create_incident(request: Request) -> JSONResponse:
+    """Validate on the loop, then plan in a worker thread."""
     try:
         body = await request.json()
     except Exception:
@@ -469,6 +471,12 @@ async def create_incident(request: Request) -> JSONResponse:
     if not isinstance(incident, dict) or not isinstance(incident.get("transcript"), str):
         return _error(422, "INVALID_INCIDENT", "incident.transcript is required")
 
+    return await run_in_threadpool(_create_incident, body, dict(request.headers))
+
+
+def _create_incident(body: Dict[str, Any], headers: Dict[str, str]) -> JSONResponse:
+    run_id = body["runId"]
+    incident = body["incident"]
     request_digest = digest(body)
     lock = _lock_for(run_id)
     with lock:
@@ -479,9 +487,9 @@ async def create_incident(request: Request) -> JSONResponse:
             replay = store.get(NS_REPLAY, f"{run_id}:create:{request_digest}")
             return JSONResponse(replay if replay is not None else _view(stored), status_code=200)
 
-        incoming = trace.parse_traceparent(request.headers.get("traceparent"))
+        incoming = trace.parse_traceparent(headers.get("traceparent"))
         trace_id = incoming["traceId"] if incoming else trace.new_trace_id()
-        tracestate = request.headers.get("tracestate") if incoming else None
+        tracestate = headers.get("tracestate") if incoming else None
         started = trace.now_nanos()
 
         policy = body.get("policy") if isinstance(body.get("policy"), dict) else {}

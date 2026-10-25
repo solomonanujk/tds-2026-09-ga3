@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import invoice_policy as policy
 from . import llm, store
@@ -421,6 +422,10 @@ async def message_send(request: Request) -> JSONResponse:
     if invalid is not None:
         return invalid
 
+    return await run_in_threadpool(_handle_message, principal, message)
+
+
+def _handle_message(principal: str, message: Dict[str, Any]) -> JSONResponse:
     # Deduplicate on the message alone: configuration, key order and
     # returnImmediately must not change the identity of the request.
     message_hash = digest(message)
