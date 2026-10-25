@@ -89,6 +89,31 @@ def _candidates() -> List[str]:
     return ordered
 
 
+def _repair_body(status: int, detail: str, body: Dict[str, Any]) -> bool:
+    """Adapt the request to a provider that rejects one of its parameters.
+
+    Newer OpenAI models want ``max_completion_tokens`` and a fixed temperature;
+    several cheap models reject structured-output mode. Each is repaired once
+    rather than losing the batch to the fallback analyser.
+    """
+    if status not in (400, 404, 422):
+        return False
+    lowered = detail.lower()
+    if "max_tokens" in lowered and "max_completion_tokens" in lowered and "max_tokens" in body:
+        body["max_completion_tokens"] = body.pop("max_tokens")
+        return True
+    if "temperature" in lowered and "temperature" in body:
+        body.pop("temperature")
+        return True
+    if "response_format" in body and ("response_format" in lowered or "json" in lowered):
+        body.pop("response_format")
+        return True
+    if "response_format" in body:
+        body.pop("response_format")
+        return True
+    return False
+
+
 def _is_unknown_model(status: int, detail: str) -> bool:
     lowered = detail.lower()
     return status in (400, 404) and (
@@ -123,7 +148,8 @@ def chat_json(
             "response_format": {"type": "json_object"},
         }
         unknown_model = False
-        for attempt in range(attempts):
+        repairs = 0
+        for attempt in range(attempts + 3):
             remaining = deadline - time.time()
             if remaining <= 1:
                 return None
@@ -159,13 +185,11 @@ def chat_json(
                 if _is_unknown_model(exc.code, detail):
                     unknown_model = True
                     break
-                # Several free models reject structured-output mode outright,
-                # and not all of them say which field they objected to.
-                if exc.code in (400, 404, 422) and "response_format" in body:
-                    body.pop("response_format", None)
-                    continue
                 if exc.code in (401, 403):
                     return None
+                if repairs < 3 and _repair_body(exc.code, detail, body):
+                    repairs += 1
+                    continue
                 if exc.code == 429:
                     time.sleep(1.5)
                     continue
