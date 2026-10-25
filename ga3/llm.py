@@ -38,7 +38,7 @@ MODEL = os.environ.get("LLM_MODEL", "gpt-5-nano")
 FALLBACK_MODELS = [
     name.strip()
     for name in os.environ.get(
-        "LLM_MODEL_FALLBACKS", "gpt-5-nano,gpt-5-mini,gpt-4o-mini,gpt-4.1-mini,gpt-4o"
+        "LLM_MODEL_FALLBACKS", "gpt-4o-mini,gpt-4.1-mini,gpt-5-mini,gpt-5-nano,gpt-4o"
     ).split(",")
     if name.strip()
 ]

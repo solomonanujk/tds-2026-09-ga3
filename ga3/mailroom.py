@@ -28,9 +28,9 @@ NS_EVAL = "mailroom.eval"
 NS_DECISION = "mailroom.decision"
 NS_REPLAY = "mailroom.replay"
 
-BATCH_SIZE = int(os.environ.get("MAILROOM_BATCH_SIZE", "6"))
-MAX_WORKERS = int(os.environ.get("MAILROOM_WORKERS", "6"))
-DECISION_BUDGET = float(os.environ.get("MAILROOM_BUDGET", "42"))
+BATCH_SIZE = int(os.environ.get("MAILROOM_BATCH_SIZE", "8"))
+MAX_WORKERS = int(os.environ.get("MAILROOM_WORKERS", "8"))
+DECISION_BUDGET = float(os.environ.get("MAILROOM_BUDGET", "40"))
 
 router = APIRouter()
 
