@@ -9,6 +9,7 @@ Run locally:  uvicorn main:app --port 8000
 from __future__ import annotations
 
 import os
+import time
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -23,6 +24,63 @@ app = FastAPI(title="TDS GA3 agents", version=os.environ.get("GA3_VERSION", "1.0
 app.include_router(invoice.router)
 app.include_router(mailroom.router)
 app.include_router(incident.router)
+
+
+DEBUG_TOKEN = os.environ.get("GA3_DEBUG_TOKEN", "").strip()
+CAPTURE_PATHS = ("/a2a/", "/mailroom", "/v2/incidents")
+
+
+@app.middleware("http")
+async def capture_requests(request, call_next):
+    """With GA3_DEBUG_TOKEN set, keep the last few grader bodies for tuning.
+
+    The exam corpora are synthetic, and seeing a real payload is the only way
+    to improve decision quality between Checks. Disabled unless the token is
+    configured, and readable only with it.
+    """
+    if not DEBUG_TOKEN or not request.url.path.startswith(CAPTURE_PATHS) or request.method != "POST":
+        return await call_next(request)
+    body = await request.body()
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request._receive = receive  # noqa: SLF001 - replay the consumed body
+    response = await call_next(request)
+    try:
+        store.put(
+            "debug.capture",
+            f"{time.time():.6f}",
+            {
+                "at": time.time(),
+                "path": request.url.path,
+                "status": response.status_code,
+                "body": body[:400_000].decode("utf-8", "replace"),
+            },
+        )
+        captures = sorted(
+            r["key"] for r in [{"key": k} for k in _capture_keys()]
+        )
+        for stale in captures[:-20]:
+            store.delete("debug.capture", stale)
+    except Exception:
+        pass
+    return response
+
+
+def _capture_keys():
+    rows = store._connect().execute(  # noqa: SLF001 - debug-only helper
+        "SELECT key FROM records WHERE ns='debug.capture'"
+    ).fetchall()
+    return [row["key"] for row in rows]
+
+
+@app.get("/debug/requests")
+def debug_requests(token: str = "", limit: int = 5) -> JSONResponse:
+    if not DEBUG_TOKEN or token != DEBUG_TOKEN:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    keys = sorted(_capture_keys())[-max(1, min(limit, 20)):]
+    return JSONResponse({"captures": [store.get("debug.capture", key) for key in keys]})
 
 
 @app.get("/", response_class=PlainTextResponse)
