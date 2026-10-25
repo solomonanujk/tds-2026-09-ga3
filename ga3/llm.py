@@ -34,6 +34,9 @@ API_KEY = (
 ).strip()
 MODEL = os.environ.get("LLM_MODEL", "openai/gpt-4.1-nano")
 TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "20"))
+USER_AGENT = os.environ.get(
+    "LLM_USER_AGENT", "tds-ga3-agent/1.0 (+https://github.com/solomonanujk/tds-2026-09-ga3)"
+)
 
 LAST_ERROR: Optional[str] = None
 CALL_COUNT = 0
@@ -98,6 +101,12 @@ def chat_json(
             headers={
                 "Authorization": f"Bearer {API_KEY}",
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                # Without an explicit agent, Cloudflare in front of the
+                # provider rejects the default urllib one with error 1010.
+                "User-Agent": USER_AGENT,
+                "HTTP-Referer": "https://github.com/solomonanujk/tds-2026-09-ga3",
+                "X-Title": "TDS 2026-09 GA3 agents",
             },
             method="POST",
         )

@@ -18,9 +18,17 @@ from fastapi.testclient import TestClient  # noqa: E402
 import main  # noqa: E402
 from ga3.invoice import A2A_MEDIA, BATCH_MEDIA, PROPOSALS_MEDIA, RECEIPTS_MEDIA, RESULTS_MEDIA  # noqa: E402
 
-client = TestClient(main.app)
-OWNER = {"Authorization": "Bearer owner-token-aaa", "A2A-Version": "1.0", "Content-Type": A2A_MEDIA}
-OUTSIDER = {"Authorization": "Bearer outsider-token-bbb", "A2A-Version": "1.0", "Content-Type": A2A_MEDIA}
+
+BASE_URL = os.environ.get("GA3_BASE_URL")
+if BASE_URL:
+    import httpx
+
+    client = httpx.Client(base_url=BASE_URL.rstrip("/"), timeout=90.0, follow_redirects=False)
+else:
+    client = TestClient(main.app)
+RUN = uuid.uuid4().hex
+OWNER = {"Authorization": f"Bearer owner-token-{RUN}", "A2A-Version": "1.0", "Content-Type": A2A_MEDIA}
+OUTSIDER = {"Authorization": f"Bearer outsider-token-{RUN}", "A2A-Version": "1.0", "Content-Type": A2A_MEDIA}
 BASE = "/a2a"
 
 failures = []

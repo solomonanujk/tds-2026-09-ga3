@@ -18,7 +18,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 import main  # noqa: E402
 from ga3.canon import canonical_bytes, digest  # noqa: E402
 
-client = TestClient(main.app)
+
+BASE_URL = os.environ.get("GA3_BASE_URL")
+if BASE_URL:
+    import httpx
+
+    client = httpx.Client(base_url=BASE_URL.rstrip("/"), timeout=90.0, follow_redirects=False)
+else:
+    client = TestClient(main.app)
 PROFILE = "ga5-mailroom-action-gate/v2"
 
 private_key = Ed25519PrivateKey.generate()
