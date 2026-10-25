@@ -13,6 +13,6 @@ services:
       - key: LLM_BASE_URL
         value: https://aipipe.org/openrouter/v1
       - key: LLM_MODEL
-        value: openai/gpt-4.1-nano
+        value: meta-llama/llama-3.3-70b-instruct:free
       - key: LLM_API_KEY
         sync: false

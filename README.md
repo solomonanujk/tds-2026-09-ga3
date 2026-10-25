@@ -28,7 +28,8 @@ Health check: `GET /healthz` reports whether a model is configured.
 |---|---|---|
 | `LLM_API_KEY` (or `AIPIPE_TOKEN`) | — | OpenAI-compatible key. **Without it the agents still answer**, using their deterministic analysers. |
 | `LLM_BASE_URL` | `https://aipipe.org/openrouter/v1` | OpenAI-compatible base URL |
-| `LLM_MODEL` | `openai/gpt-4.1-nano` | any cheap or free model |
+| `LLM_MODEL` | `meta-llama/llama-3.3-70b-instruct:free` | any model; `:free` OpenRouter models draw no credits |
+| `LLM_MAX_OUTPUT_TOKENS` | `3000` | per-request output ceiling (OpenRouter rejects a call whose max_tokens exceeds the balance) |
 | `GA3_DATA_DIR` / `GA3_DB_PATH` | `/tmp` | SQLite state file |
 | `A2A_BASE_URL` | derived from the request | force the exact base URL advertised in the agent card |
 | `GA3_DEBUG_TOKEN` | unset | when set, `GET /debug/requests?token=…` returns the last grader bodies, for tuning between Checks |

@@ -124,11 +124,16 @@ def chat_json(
         except urllib.error.HTTPError as exc:  # pragma: no cover - network
             detail = exc.read()[:400].decode("utf-8", "replace")
             LAST_ERROR = f"http {exc.code}: {detail}"
-            if exc.code in (400, 401, 403, 404) and "response_format" in detail:
+            # Several free models reject structured-output mode outright, and
+            # not all of them say which field they objected to.
+            if exc.code in (400, 404, 422) and "response_format" in body:
                 body.pop("response_format", None)
                 continue
-            if exc.code in (401, 403, 404):
+            if exc.code in (401, 403):
                 break
+            if exc.code == 429:  # free-tier rate limit: back off once, then give up
+                time.sleep(1.5)
+                continue
         except Exception as exc:  # pragma: no cover - network
             LAST_ERROR = f"{type(exc).__name__}: {exc}"
         time.sleep(0.4 * (attempt + 1))
