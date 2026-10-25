@@ -191,7 +191,10 @@ done = final.json()
 expect("terminal completed", done["status"] == "completed", done.get("status"))
 expect("chosenEffect reported", done["chosenEffect"] == effect_tool)
 expect("actionLog present", isinstance(done.get("actionLog"), list) and len(done["actionLog"]) == len(pending) + 2)
-expect("receiptLog present", isinstance(done.get("receiptLog"), list) and len(done["receiptLog"]) >= 4)
+expect("receiptLog present",
+       isinstance(done.get("receiptLog"), list)
+       and len(done["receiptLog"]) >= len(pending) + 2,  # diagnostics + retry + effect
+       done.get("receiptLog"))
 expect("no pending work", done.get("dispatches") == [] and done.get("approvals") == [])
 
 # ------------------------------------------------------------------- OTLP
