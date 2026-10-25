@@ -32,7 +32,17 @@ API_KEY = (
     or os.environ.get("OPENAI_API_KEY")
     or ""
 ).strip()
-MODEL = os.environ.get("LLM_MODEL", "openai/gpt-4.1-nano")
+MODEL = os.environ.get("LLM_MODEL", "gpt-5-nano")
+# Provider catalogues change under us: a deprecated or unknown model is
+# retried against the next candidate instead of failing the request.
+FALLBACK_MODELS = [
+    name.strip()
+    for name in os.environ.get(
+        "LLM_MODEL_FALLBACKS", "gpt-5-nano,gpt-5-mini,gpt-4o-mini,gpt-4.1-mini,gpt-4o"
+    ).split(",")
+    if name.strip()
+]
+ACTIVE_MODEL = MODEL
 TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "20"))
 MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "3000"))
 USER_AGENT = os.environ.get(
@@ -71,6 +81,24 @@ def _extract_json(text: str) -> Optional[Any]:
     return None
 
 
+def _candidates() -> List[str]:
+    ordered = [MODEL] + [name for name in FALLBACK_MODELS if name != MODEL]
+    if ACTIVE_MODEL in ordered:
+        index = ordered.index(ACTIVE_MODEL)
+        ordered = ordered[index:] + ordered[:index]
+    return ordered
+
+
+def _is_unknown_model(status: int, detail: str) -> bool:
+    lowered = detail.lower()
+    return status in (400, 404) and (
+        "model_not_found" in lowered
+        or "deprecated" in lowered
+        or "pricing unknown" in lowered
+        or ("model" in lowered and ("not found" in lowered or "does not exist" in lowered))
+    )
+
+
 def chat_json(
     messages: List[Dict[str, str]],
     *,
@@ -80,63 +108,72 @@ def chat_json(
     attempts: int = 2,
 ) -> Optional[Any]:
     """One chat completion, parsed as JSON. ``None`` on any failure."""
-    global LAST_ERROR, CALL_COUNT
+    global LAST_ERROR, CALL_COUNT, ACTIVE_MODEL
     if not API_KEY:
         LAST_ERROR = "no api key configured"
         return None
-    body = {
-        "model": MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": min(max_tokens, MAX_OUTPUT_TOKENS),
-        "response_format": {"type": "json_object"},
-    }
     deadline = time.time() + (timeout or TIMEOUT)
-    for attempt in range(attempts):
-        remaining = deadline - time.time()
-        if remaining <= 1:
-            break
-        request = urllib.request.Request(
-            f"{BASE_URL}/chat/completions",
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {API_KEY}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                # Without an explicit agent, Cloudflare in front of the
-                # provider rejects the default urllib one with error 1010.
-                "User-Agent": USER_AGENT,
-                "HTTP-Referer": "https://github.com/solomonanujk/tds-2026-09-ga3",
-                "X-Title": "TDS 2026-09 GA3 agents",
-            },
-            method="POST",
-        )
-        try:
-            CALL_COUNT += 1
-            with urllib.request.urlopen(request, timeout=remaining) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            content = payload["choices"][0]["message"]["content"]
-            parsed = _extract_json(content)
-            if parsed is not None:
-                LAST_ERROR = None
-                return parsed
-            LAST_ERROR = "model returned unparseable content"
-        except urllib.error.HTTPError as exc:  # pragma: no cover - network
-            detail = exc.read()[:400].decode("utf-8", "replace")
-            LAST_ERROR = f"http {exc.code}: {detail}"
-            # Several free models reject structured-output mode outright, and
-            # not all of them say which field they objected to.
-            if exc.code in (400, 404, 422) and "response_format" in body:
-                body.pop("response_format", None)
-                continue
-            if exc.code in (401, 403):
-                break
-            if exc.code == 429:  # free-tier rate limit: back off once, then give up
-                time.sleep(1.5)
-                continue
-        except Exception as exc:  # pragma: no cover - network
-            LAST_ERROR = f"{type(exc).__name__}: {exc}"
-        time.sleep(0.4 * (attempt + 1))
+
+    for model in _candidates():
+        body = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": min(max_tokens, MAX_OUTPUT_TOKENS),
+            "response_format": {"type": "json_object"},
+        }
+        unknown_model = False
+        for attempt in range(attempts):
+            remaining = deadline - time.time()
+            if remaining <= 1:
+                return None
+            request = urllib.request.Request(
+                f"{BASE_URL}/chat/completions",
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    # Without an explicit agent, Cloudflare in front of the
+                    # provider rejects the default urllib one with error 1010.
+                    "User-Agent": USER_AGENT,
+                    "HTTP-Referer": "https://github.com/solomonanujk/tds-2026-09-ga3",
+                    "X-Title": "TDS 2026-09 GA3 agents",
+                },
+                method="POST",
+            )
+            try:
+                CALL_COUNT += 1
+                with urllib.request.urlopen(request, timeout=remaining) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                content = payload["choices"][0]["message"]["content"]
+                parsed = _extract_json(content)
+                if parsed is not None:
+                    LAST_ERROR = None
+                    ACTIVE_MODEL = model
+                    return parsed
+                LAST_ERROR = "model returned unparseable content"
+            except urllib.error.HTTPError as exc:  # pragma: no cover - network
+                detail = exc.read()[:400].decode("utf-8", "replace")
+                LAST_ERROR = f"http {exc.code} ({model}): {detail}"
+                if _is_unknown_model(exc.code, detail):
+                    unknown_model = True
+                    break
+                # Several free models reject structured-output mode outright,
+                # and not all of them say which field they objected to.
+                if exc.code in (400, 404, 422) and "response_format" in body:
+                    body.pop("response_format", None)
+                    continue
+                if exc.code in (401, 403):
+                    return None
+                if exc.code == 429:
+                    time.sleep(1.5)
+                    continue
+            except Exception as exc:  # pragma: no cover - network
+                LAST_ERROR = f"{type(exc).__name__}: {exc}"
+            time.sleep(0.4 * (attempt + 1))
+        if not unknown_model:
+            return None
     return None
 
 
