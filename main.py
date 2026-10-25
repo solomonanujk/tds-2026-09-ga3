@@ -101,6 +101,7 @@ def healthz() -> JSONResponse:
             "ok": True,
             "db": store.DB_PATH,
             "model": llm.model_name(),
+            "baseUrl": llm.BASE_URL,
             "modelConfigured": llm.available(),
             "modelCalls": llm.CALL_COUNT,
             "lastModelError": llm.LAST_ERROR,

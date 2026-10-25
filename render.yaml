@@ -11,8 +11,8 @@ services:
       - key: GA3_DATA_DIR
         value: /tmp
       - key: LLM_BASE_URL
-        value: https://aipipe.org/openrouter/v1
+        value: https://aipipe.org/openai/v1
       - key: LLM_MODEL
-        value: meta-llama/llama-3.3-70b-instruct:free
+        value: gpt-4.1-nano
       - key: LLM_API_KEY
         sync: false
