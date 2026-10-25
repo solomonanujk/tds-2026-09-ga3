@@ -184,7 +184,12 @@ def _decide_batch(batch: List[Dict[str, Any]], keys: Dict[str, str], timeout: fl
     decisions = policy.model_decisions(batch, timeout=timeout) if llm.available() else {}
     for package in batch:
         package_id = str(package.get("packageId"))
-        store.put(NS_DECISION, keys[package_id], policy.assemble(package, decisions.get(package_id)))
+        choice = decisions.get(package_id)
+        if not isinstance(choice, dict) or choice.get("action") not in policy.ACTIONS:
+            # Only a model-backed decision is worth caching; a fallback would
+            # be replayed on every later batch of the same content.
+            continue
+        store.put(NS_DECISION, keys[package_id], policy.assemble(package, choice))
 
 
 def decide_packages(packages: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -223,7 +228,6 @@ def decide_packages(packages: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
             cached = store.get(NS_DECISION, keys[package_id])
             if cached is None:
                 cached = policy.assemble(package, None)
-                store.put(NS_DECISION, keys[package_id], cached)
             out[package_id] = cached
     return out
 

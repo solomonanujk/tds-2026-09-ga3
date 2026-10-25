@@ -131,7 +131,9 @@ def _decide_batch(batch: List[Dict[str, Any]], keys: Dict[str, str], timeout: fl
         dossier_id = str(dossier.get("dossierId"))
         choice = decisions.get(dossier_id)
         if not choice or choice.get("action") not in policy.ALLOWED_ACTIONS:
-            choice = policy.heuristic_decision(dossier)
+            # Do not cache a fallback: it would be replayed on every later
+            # evaluation even once the model is answering again.
+            continue
         assembled = policy.assemble(dossier, choice["action"], choice.get("fields") or {}, choice.get("evidence") or [])
         if not assembled["evidence"]:
             fallback = policy.heuristic_decision(dossier)
@@ -178,7 +180,6 @@ def decide_all(
                 cached = policy.assemble(dossier, choice["action"], choice.get("fields") or {}, choice["evidence"])
                 if not cached["evidence"]:
                     cached["evidence"] = policy.line_ids(dossier)[:1]
-                store.put(NS_DECISION, keys[dossier_id], cached)
             out[dossier_id] = cached
     return out, keys
 

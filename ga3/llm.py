@@ -34,6 +34,7 @@ API_KEY = (
 ).strip()
 MODEL = os.environ.get("LLM_MODEL", "openai/gpt-4.1-nano")
 TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "20"))
+MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "3000"))
 USER_AGENT = os.environ.get(
     "LLM_USER_AGENT", "tds-ga3-agent/1.0 (+https://github.com/solomonanujk/tds-2026-09-ga3)"
 )
@@ -87,7 +88,7 @@ def chat_json(
         "model": MODEL,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": min(max_tokens, MAX_OUTPUT_TOKENS),
         "response_format": {"type": "json_object"},
     }
     deadline = time.time() + (timeout or TIMEOUT)
